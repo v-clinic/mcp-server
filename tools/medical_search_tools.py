@@ -14,6 +14,9 @@ import urllib.parse
 import urllib.request
 from typing import Optional
 
+from cache.decorators import cached
+from cache.keys import clinical_guidelines_key, is_json_success, pubmed_search_key
+
 _ESEARCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
 _ESUMMARY_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
 _EFETCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
@@ -124,6 +127,11 @@ def _run_search(query: str, max_results: int) -> list[dict]:
     return articles
 
 
+@cached(
+    namespace="pubmed_search",
+    key_fn=lambda query, max_results=5, **_: pubmed_search_key(query, max_results),
+    should_cache=is_json_success,
+)
 def search_pubmed(query: str, max_results: int = 5) -> str:
     """Search PubMed for recent biomedical literature relevant to a clinical query.
 
@@ -151,6 +159,11 @@ def search_pubmed(query: str, max_results: int = 5) -> str:
         return json.dumps({"error": str(exc)})
 
 
+@cached(
+    namespace="clinical_guidelines",
+    key_fn=lambda condition, max_results=5, **_: clinical_guidelines_key(condition, max_results),
+    should_cache=is_json_success,
+)
 def get_clinical_guidelines(condition: str, max_results: int = 5) -> str:
     """Search PubMed specifically for clinical practice guidelines on a condition.
 

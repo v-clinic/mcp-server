@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from backend.db import get_connection
+from cache.decorators import cached, invalidates
+from cache.keys import lab_order_key, lab_results_key, pending_lab_orders_key
 
 
 def _now() -> str:
@@ -20,6 +22,10 @@ def _now() -> str:
 # Lab Orders
 # ---------------------------------------------------------------------------
 
+@invalidates([
+    ("pending_lab_orders", lambda visit_id, **_: pending_lab_orders_key(visit_id)),
+    ("pending_lab_orders", lambda **_: pending_lab_orders_key(None)),
+])
 def create_lab_order(
     visit_id: str,
     patient_id: str,
@@ -45,6 +51,7 @@ def create_lab_order(
     return {"order_id": order_id, "ordered_at": now}
 
 
+@cached(namespace="lab_orders", key_fn=lambda order_id, **_: lab_order_key(order_id))
 def get_lab_order(order_id: str) -> dict:
     """Get a specific lab order by order_id."""
     with get_connection() as conn:
@@ -60,6 +67,7 @@ def get_lab_order(order_id: str) -> dict:
     return dict(row)
 
 
+@cached(namespace="pending_lab_orders", key_fn=lambda visit_id=None, **_: pending_lab_orders_key(visit_id))
 def get_pending_lab_orders(visit_id: Optional[str] = None) -> dict:
     """List all lab orders with status 'pending' or 'in_progress', oldest first.
     If visit_id is provided, only returns orders for that visit.
@@ -94,6 +102,10 @@ def get_pending_lab_orders(visit_id: Optional[str] = None) -> dict:
     return {"orders": [dict(r) for r in rows]}
 
 
+@invalidates([
+    ("lab_orders", lambda order_id, **_: lab_order_key(order_id)),
+    ("pending_lab_orders", None),
+])
 def update_lab_order_status(order_id: str, status: str) -> dict:
     """Update the status of a lab order (pending → in_progress → completed | cancelled)."""
     allowed = {"pending", "in_progress", "completed", "cancelled"}
@@ -114,6 +126,9 @@ def update_lab_order_status(order_id: str, status: str) -> dict:
 # Lab Results  (stored as observations, category='laboratory')
 # ---------------------------------------------------------------------------
 
+@invalidates([
+    ("lab_results", None),  # visit_id not available among create_lab_result args
+])
 def create_lab_result(
     order_id: str,
     patient_id: str,
@@ -151,6 +166,10 @@ def create_lab_result(
     return {"result_id": result_id, "performed_at": now}
 
 
+@cached(
+    namespace="lab_results",
+    key_fn=lambda visit_id=None, order_id=None, **_: lab_results_key(visit_id, order_id),
+)
 def get_lab_results(
     visit_id: Optional[str] = None,
     order_id: Optional[str] = None,
@@ -187,6 +206,9 @@ def get_lab_results(
     return {"results": [dict(r) for r in rows]}
 
 
+@invalidates([
+    ("lab_results", None),  # visit_id not available among update_lab_result args
+])
 def update_lab_result(
     result_id: str,
     result_data: Optional[str] = None,

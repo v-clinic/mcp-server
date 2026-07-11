@@ -22,6 +22,9 @@ import os
 import pathlib
 import re
 
+from cache.decorators import cached
+from cache.keys import is_json_success, rag_search_key
+
 # ---------------------------------------------------------------------------
 # Paths & index config
 # ---------------------------------------------------------------------------
@@ -163,6 +166,11 @@ def _get_index():
     return _pinecone_index
 
 
+@cached(
+    namespace="rag_search",
+    key_fn=lambda query, max_results=5, **_: rag_search_key(query, max_results),
+    should_cache=is_json_success,
+)
 def search_clinic_knowledge(query: str, max_results: int = 5) -> str:
     """Search vClinic's internal knowledge base for protocols, drug formulary, and SOPs.
 

@@ -4,8 +4,13 @@ import uuid
 from typing import Optional
 
 from backend.db import get_connection
+from cache.decorators import cached, invalidates
+from cache.keys import patient_key, patient_search_key
 
 
+@invalidates([
+    ("patient_search", None),  # new patient may match any existing search
+])
 def create_patient(
     first_name: str,
     last_name: str,
@@ -38,6 +43,7 @@ def create_patient(
     return {"patient_id": patient_id}
 
 
+@cached(namespace="patients", key_fn=lambda patient_id, **_: patient_key(patient_id))
 def get_patient(patient_id: str) -> dict:
     """Retrieve a patient record by patient_id."""
     with get_connection() as conn:
@@ -55,6 +61,7 @@ def get_patient(patient_id: str) -> dict:
     return dict(row)
 
 
+@cached(namespace="patient_search", key_fn=lambda query, **_: patient_search_key(query))
 def search_patients(query: str) -> dict:
     """Search patients by partial first name, last name, full name, or date of birth (YYYY-MM-DD)."""
     like = f"%{query}%"

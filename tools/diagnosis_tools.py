@@ -5,12 +5,17 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from backend.db import get_connection
+from cache.decorators import cached, invalidates
+from cache.keys import diagnoses_key
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+@invalidates([
+    ("diagnoses", lambda visit_id, **_: diagnoses_key(visit_id)),
+])
 def create_diagnosis(
     visit_id: str,
     patient_id: str,
@@ -35,6 +40,9 @@ def create_diagnosis(
     return {"diagnosis_id": diagnosis_id, "created_at": now}
 
 
+@invalidates([
+    ("diagnoses", None),  # visit_id not available among update_diagnosis args
+])
 def update_diagnosis(
     diagnosis_id: str,
     description: Optional[str] = None,
@@ -67,6 +75,7 @@ def update_diagnosis(
     return {"diagnosis_id": diagnosis_id, "updated_at": updated_at}
 
 
+@cached(namespace="diagnoses", key_fn=lambda visit_id, **_: diagnoses_key(visit_id))
 def get_diagnoses_for_visit(visit_id: str) -> dict:
     """Retrieve all diagnoses/conditions for a visit, ordered by creation time."""
     with get_connection() as conn:

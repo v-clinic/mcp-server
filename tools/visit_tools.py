@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from typing import Optional, Union
 
 from backend.db import get_connection
+from cache.decorators import cached, invalidates
+from cache.keys import patient_visits_key, visit_key
 
 
 def _now() -> str:
@@ -21,6 +23,9 @@ def _serialize_vital_signs(vital_signs: Optional[Union[str, dict]]) -> Optional[
     return vital_signs
 
 
+@invalidates([
+    ("patient_visits", lambda patient_id, **_: patient_visits_key(patient_id)),
+])
 def create_visit(
     patient_id: str,
     doctor_id: str,
@@ -47,6 +52,7 @@ def create_visit(
     return {"visit_id": visit_id, "visit_date": now}
 
 
+@cached(namespace="visits", key_fn=lambda visit_id, **_: visit_key(visit_id))
 def get_visit(visit_id: str) -> dict:
     """Retrieve an encounter record by visit_id."""
     with get_connection() as conn:
@@ -65,6 +71,7 @@ def get_visit(visit_id: str) -> dict:
     return dict(row)
 
 
+@cached(namespace="patient_visits", key_fn=lambda patient_id, **_: patient_visits_key(patient_id))
 def get_visits_for_patient(patient_id: str) -> dict:
     """List all encounters for a patient, most recent first."""
     with get_connection() as conn:
@@ -79,6 +86,10 @@ def get_visits_for_patient(patient_id: str) -> dict:
     return {"visits": [dict(r) for r in rows]}
 
 
+@invalidates([
+    ("visits", lambda visit_id, **_: visit_key(visit_id)),
+    ("patient_visits", None),  # patient_id not available among update_visit args
+])
 def update_visit(
     visit_id: str,
     chief_complaint: Optional[str] = None,

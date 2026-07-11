@@ -25,11 +25,17 @@ import functools
 import io
 import json
 import uuid
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-_LOG_PATH = Path(__file__).resolve().parents[1] / "data" / "audit.log"
+_LOG_PATH = Path(__file__).resolve().parent / "data" / "audit.log"
+
+# Set by the @audit decorator around each tool call; read by log_cache_event()
+# so that cache HIT/MISS events (logged from inside @cached, several stack
+# frames below @audit) can still be attributed to the calling staff member.
+_staff_ctx: ContextVar[tuple[str, str]] = ContextVar("staff_ctx", default=("", ""))
 
 _CSV_FIELDS = [
     "log_id", "timestamp", "staff_id", "role", "tool_name",
@@ -79,6 +85,8 @@ _TOOL_REGISTRY: dict[str, tuple[str, str]] = {
     "search_pubmed":               ("READ",   "external_knowledge"),
     "get_clinical_guidelines":     ("READ",   "external_knowledge"),
     "search_clinic_knowledge":     ("READ",   "internal_knowledge"),
+    # Cache observability
+    "get_cache_stats":             ("READ",   "internal_knowledge"),
 }
 
 # Keys whose values are safe to store in `details` (no free-text PHI)
@@ -147,6 +155,47 @@ def log_tool_call(
         print(f"[AUDIT ERROR] Failed to write audit log for '{tool_name}': {exc}", flush=True)
 
 
+def log_cache_event(tool_name: str, namespace: str, key: str, hit: bool) -> None:
+    """Append one CACHE_HIT/CACHE_MISS row to the audit log. Never raises.
+
+    Reuses the existing 12-column schema — no new columns are introduced.
+    `resource` carries the cache namespace; `details` carries the cache key
+    only (never the cached value, never PHI). staff_id/role come from the
+    ContextVar set by the enclosing @audit call.
+    """
+    try:
+        staff_id, role = _staff_ctx.get()
+        action = "CACHE_HIT" if hit else "CACHE_MISS"
+        row = [
+            str(uuid.uuid4()),
+            datetime.now(timezone.utc).isoformat(),
+            staff_id or "",
+            role or "",
+            tool_name,
+            "",
+            "",
+            action,
+            namespace,
+            "SUCCESS",
+            "",
+            json.dumps({"key": key}, separators=(",", ":")),
+        ]
+        _LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        write_header = not _LOG_PATH.exists() or _LOG_PATH.stat().st_size == 0
+        with _LOG_PATH.open("a", encoding="utf-8", newline="") as fh:
+            fcntl.flock(fh, fcntl.LOCK_EX)
+            try:
+                writer = csv.writer(fh)
+                if write_header:
+                    writer.writerow(_CSV_FIELDS)
+                writer.writerow(row)
+                fh.flush()
+            finally:
+                fcntl.flock(fh, fcntl.LOCK_UN)
+    except Exception as exc:
+        print(f"[AUDIT ERROR] Failed to write cache event for '{tool_name}': {exc}", flush=True)
+
+
 def audit(fn: Callable) -> Callable:
     """Decorator that wraps an MCP tool function with audit logging.
 
@@ -171,13 +220,17 @@ def audit(fn: Callable) -> Callable:
             if i < len(param_names):
                 call_args[param_names[i]] = val
 
+        role = kwargs.get("role")
+        token = _staff_ctx.set((staff_id or "", role or ""))
         try:
             result = fn(*args, **kwargs)
-            log_tool_call(fn.__name__, call_args, "SUCCESS", staff_id=staff_id)
+            log_tool_call(fn.__name__, call_args, "SUCCESS", staff_id=staff_id, role=role)
             return result
         except Exception as exc:
             log_tool_call(fn.__name__, call_args, "ERROR",
-                          staff_id=staff_id, error_msg=str(exc))
+                          staff_id=staff_id, role=role, error_msg=str(exc))
             raise
+        finally:
+            _staff_ctx.reset(token)
 
     return wrapper

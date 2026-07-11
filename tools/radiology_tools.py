@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from backend.db import get_connection
+from cache.decorators import cached, invalidates
+from cache.keys import pending_rad_orders_key, radiology_order_key, radiology_reports_key
 
 
 def _now() -> str:
@@ -20,6 +22,10 @@ def _now() -> str:
 # Radiology Orders
 # ---------------------------------------------------------------------------
 
+@invalidates([
+    ("pending_rad_orders", lambda visit_id, **_: pending_rad_orders_key(visit_id)),
+    ("pending_rad_orders", lambda **_: pending_rad_orders_key(None)),
+])
 def create_radiology_order(
     visit_id: str,
     patient_id: str,
@@ -45,6 +51,7 @@ def create_radiology_order(
     return {"order_id": order_id, "ordered_at": now}
 
 
+@cached(namespace="radiology_orders", key_fn=lambda order_id, **_: radiology_order_key(order_id))
 def get_radiology_order(order_id: str) -> dict:
     """Get a specific radiology order by order_id."""
     with get_connection() as conn:
@@ -60,6 +67,7 @@ def get_radiology_order(order_id: str) -> dict:
     return dict(row)
 
 
+@cached(namespace="pending_rad_orders", key_fn=lambda visit_id=None, **_: pending_rad_orders_key(visit_id))
 def get_pending_radiology_orders(visit_id: Optional[str] = None) -> dict:
     """List all radiology orders with status 'pending' or 'in_progress', oldest first.
     If visit_id is provided, only returns orders for that visit.
@@ -94,6 +102,10 @@ def get_pending_radiology_orders(visit_id: Optional[str] = None) -> dict:
     return {"orders": [dict(r) for r in rows]}
 
 
+@invalidates([
+    ("radiology_orders", lambda order_id, **_: radiology_order_key(order_id)),
+    ("pending_rad_orders", None),
+])
 def update_radiology_order_status(order_id: str, status: str) -> dict:
     """Update the status of a radiology order (pending → in_progress → completed | cancelled)."""
     allowed = {"pending", "in_progress", "completed", "cancelled"}
@@ -114,6 +126,9 @@ def update_radiology_order_status(order_id: str, status: str) -> dict:
 # Radiology Reports  (stored in imaging_studies with operational columns)
 # ---------------------------------------------------------------------------
 
+@invalidates([
+    ("radiology_reports", None),  # visit_id not available among create_radiology_report args
+])
 def create_radiology_report(
     order_id: str,
     patient_id: str,
@@ -151,6 +166,10 @@ def create_radiology_report(
     return {"report_id": report_id, "performed_at": now}
 
 
+@cached(
+    namespace="radiology_reports",
+    key_fn=lambda visit_id=None, order_id=None, **_: radiology_reports_key(visit_id, order_id),
+)
 def get_radiology_report(
     visit_id: Optional[str] = None,
     order_id: Optional[str] = None,
@@ -189,6 +208,9 @@ def get_radiology_report(
     return {"reports": [dict(r) for r in rows]}
 
 
+@invalidates([
+    ("radiology_reports", None),  # visit_id not available among update_radiology_report args
+])
 def update_radiology_report(
     report_id: str,
     findings: Optional[str] = None,

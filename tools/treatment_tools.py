@@ -5,12 +5,17 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from backend.db import get_connection
+from cache.decorators import cached, invalidates
+from cache.keys import treatments_key
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+@invalidates([
+    ("treatments", lambda visit_id, **_: treatments_key(visit_id)),
+])
 def create_treatment(
     visit_id: str,
     patient_id: str,
@@ -47,6 +52,9 @@ def create_treatment(
     return {"treatment_id": treatment_id, "created_at": now}
 
 
+@invalidates([
+    ("treatments", None),  # visit_id not available among update_treatment args
+])
 def update_treatment(
     treatment_id: str,
     description: Optional[str] = None,
@@ -85,6 +93,7 @@ def update_treatment(
     return {"treatment_id": treatment_id, "updated_at": updated_at}
 
 
+@cached(namespace="treatments", key_fn=lambda visit_id, **_: treatments_key(visit_id))
 def get_treatments_for_visit(visit_id: str) -> dict:
     """List all medications/treatments prescribed for a visit."""
     with get_connection() as conn:

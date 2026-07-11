@@ -65,6 +65,7 @@ from tools.medical_search_tools import (
     get_clinical_guidelines,
 )
 from rag_tools.rag_tools import init_rag_collection, search_clinic_knowledge
+from cache.manager import get_cache_manager
 
 # ---------------------------------------------------------------------------
 # Initialise DB (creates tables + seeds default staff on first run)
@@ -137,6 +138,18 @@ mcp.tool()(audit(update_radiology_report))
 mcp.tool()(audit(search_pubmed))
 mcp.tool()(audit(get_clinical_guidelines))
 mcp.tool()(audit(search_clinic_knowledge))
+
+
+def get_cache_stats() -> dict:
+    """Return per-namespace cache hit/miss counts, hit rate, size, and TTL.
+
+    Useful for verifying cache effectiveness and diagnosing staleness issues.
+    Contains no patient data — only counters and configuration.
+    """
+    return get_cache_manager().stats()
+
+
+mcp.tool()(audit(get_cache_stats))
 
 
 if __name__ == "__main__":
