@@ -7,6 +7,18 @@ Run from the project root with:
 Pass --reinit to wipe and recreate the database (drops all data):
     python -m server --reinit
 
+By default the server speaks MCP over stdio. To serve over a network
+transport instead (e.g. for a network-accessible deployment), pass
+--transport with either "sse" or "streamable-http":
+    python -m server --transport streamable-http --host 127.0.0.1 --port 8000
+    python -m server --transport sse --host 127.0.0.1 --port 8000
+
+Transport, host, and port can also be set via environment variables
+(useful when the CLI args aren't easily controlled, e.g. container startup):
+    MCP_TRANSPORT=streamable-http MCP_HOST=0.0.0.0 MCP_PORT=8000 python -m server
+    MCP_TRANSPORT=sse MCP_HOST=0.0.0.0 MCP_PORT=8000 python -m server
+CLI arguments take precedence over environment variables.
+
 Or configure in VS Code / Claude Desktop as:
     {
         "command": "python",
@@ -68,17 +80,37 @@ from rag_tools.rag_tools import init_rag_collection, search_clinic_knowledge
 from cache.manager import get_cache_manager
 
 # ---------------------------------------------------------------------------
+# CLI / environment configuration
+# ---------------------------------------------------------------------------
+import argparse
+import os
+from pathlib import Path
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="vClinic MCP server")
+    parser.add_argument("--reinit", action="store_true",
+                         help="Wipe and recreate the database on startup.")
+    parser.add_argument("--transport", choices=["stdio", "sse", "streamable-http"],
+                         default=os.environ.get("MCP_TRANSPORT", "stdio"),
+                         help="MCP transport to serve. Default: stdio.")
+    parser.add_argument("--host", default=os.environ.get("MCP_HOST", "127.0.0.1"),
+                         help="Host to bind when using sse/streamable-http. Default: 127.0.0.1.")
+    parser.add_argument("--port", type=int, default=int(os.environ.get("MCP_PORT", "8000")),
+                         help="Port to bind when using sse/streamable-http. Default: 8000.")
+    return parser.parse_args()
+
+
+_args = _parse_args()
+
+# ---------------------------------------------------------------------------
 # Initialise DB (creates tables + seeds default staff on first run)
 # Pass --reinit on the command line to wipe and recreate the database.
 # ---------------------------------------------------------------------------
-import sys
-from pathlib import Path
-
-_reinit = "--reinit" in sys.argv
 _db_path = Path(__file__).parent / "data" / "vclinic.db"
-if _reinit and _db_path.exists():
+if _args.reinit and _db_path.exists():
     _db_path.unlink()
-if _reinit or not _db_path.exists():
+if _args.reinit or not _db_path.exists():
     init_db()
 
 # ---------------------------------------------------------------------------
@@ -88,8 +120,10 @@ init_rag_collection()
 
 # ---------------------------------------------------------------------------
 # FastMCP server
+# host/port only take effect for network transports (sse, streamable-http);
+# they are ignored by FastMCP when running over stdio.
 # ---------------------------------------------------------------------------
-mcp = FastMCP("vclinic-mcp-server")
+mcp = FastMCP("vclinic-mcp-server", host=_args.host, port=_args.port)
 
 from audit_logger import audit
 # staff tools
@@ -153,4 +187,8 @@ mcp.tool()(audit(get_cache_stats))
 
 
 if __name__ == "__main__":
-    mcp.run(transport="stdio")
+    if _args.transport == "streamable-http":
+        print(f"[vClinic MCP] Serving Streamable HTTP on http://{_args.host}:{_args.port}/mcp", flush=True)
+    elif _args.transport == "sse":
+        print(f"[vClinic MCP] Serving SSE on http://{_args.host}:{_args.port}/sse", flush=True)
+    mcp.run(transport=_args.transport)
